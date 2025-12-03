@@ -1,0 +1,42 @@
+# --- CMake / build ---
+build/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+*.dir/
+
+# --- Исполняемые файлы ---
+*.exe
+*.out
+*.obj
+*.o
+*.a
+*.so
+*.dll
+
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# --- IDE / редакторы ---
+.vscode/
+.idea/
+*.code-workspace
+
+# --- Логи ---
+*.log
+
+# --- Временные файлы, бэкапы ---
+*~
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# --- Данные и графики (если не хочешь коммитить результаты запусков) ---
+data/*.csv
+data/*.png
+data/*.pdf
