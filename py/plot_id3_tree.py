@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import csv
 import os
+import sys
 from math import log2
 import matplotlib.pyplot as plt
 
@@ -34,7 +35,7 @@ def load_dataset(csv_path):
     return attr_names, target_name, data
 
 
-# ---------- ID3 на Python ----------
+# ---------- общие функции ----------
 
 def entropy(examples):
     if not examples:
@@ -72,6 +73,103 @@ def information_gain(examples, attr_index):
     return base - cond
 
 
+def split_info(examples, attr_index):
+    """
+    SplitInfo для C4.5: энтропия распределения по значениям атрибута.
+    """
+    subsets = split_by_attr(examples, attr_index)
+    n = len(examples)
+    result = 0.0
+    for subset in subsets.values():
+        p = len(subset) / n
+        if p > 0:
+            result -= p * log2(p)
+    return result
+
+
+def gain_ratio(examples, attr_index):
+    ig = information_gain(examples, attr_index)
+    si = split_info(examples, attr_index)
+    if si <= 1e-12:
+        return 0.0
+    return ig / si
+
+
+def gini_impurity(examples):
+    if not examples:
+        return 0.0
+    freq = {}
+    for ex in examples:
+        freq[ex["label"]] = freq.get(ex["label"], 0) + 1
+    n = len(examples)
+    result = 1.0
+    for cnt in freq.values():
+        p = cnt / n
+        result -= p * p
+    return result
+
+
+def gini_gain(examples, attr_index):
+    """
+    Уменьшение Gini при разбиении по атрибуту (вариант CART).
+    """
+    if not examples:
+        return 0.0
+    base = gini_impurity(examples)
+    subsets = split_by_attr(examples, attr_index)
+    n = len(examples)
+    cond = 0.0
+    for subset in subsets.values():
+        w = len(subset) / n
+        cond += w * gini_impurity(subset)
+    return base - cond
+
+
+def chi_square_score(examples, attr_index):
+    """
+    Упрощённый CHAID: используем статистику χ² без p-value.
+    Строим таблицу: значение атрибута x класс.
+    """
+    subsets = split_by_attr(examples, attr_index)
+    if not subsets:
+        return 0.0
+
+    # множество всех классов
+    classes = sorted({ex["label"] for ex in examples})
+    class_index = {c: i for i, c in enumerate(classes)}
+
+    # строим таблицу наблюдаемых частот
+    values = list(subsets.keys())
+    value_index = {v: i for i, v in enumerate(values)}
+
+    rows = len(values)
+    cols = len(classes)
+
+    # O[i][j] — наблюдаемое количество
+    O = [[0 for _ in range(cols)] for _ in range(rows)]
+    for v, subset in subsets.items():
+        i = value_index[v]
+        for ex in subset:
+            j = class_index[ex["label"]]
+            O[i][j] += 1
+
+    # суммы по строкам/столбцам
+    row_sum = [sum(O[i][j] for j in range(cols)) for i in range(rows)]
+    col_sum = [sum(O[i][j] for i in range(rows)) for j in range(cols)]
+    total = sum(row_sum)
+    if total == 0:
+        return 0.0
+
+    chi2 = 0.0
+    for i in range(rows):
+        for j in range(cols):
+            expected = row_sum[i] * col_sum[j] / total
+            if expected > 0:
+                chi2 += (O[i][j] - expected) ** 2 / expected
+
+    return chi2
+
+
 def majority_label(examples):
     freq = {}
     for ex in examples:
@@ -82,31 +180,59 @@ def majority_label(examples):
 class Node:
     def __init__(self, is_leaf=False, label=None, attr_index=None, attr_name=None):
         self.is_leaf = is_leaf
-        self.label = label          # для листа: класс, для узла: имя атрибута
+        self.label = label          # для листа: класс; для узла: имя атрибута
         self.attr_index = attr_index
         self.attr_name = attr_name
         self.children = {}          # value -> Node
 
 
-def build_id3(examples, attr_names, available_attrs):
-    # все одного класса?
+# ---------- построение дерева для разных алгоритмов ----------
+
+def choose_best_attribute(examples, attr_names, available_attrs, algo: str):
+    """
+    Возвращает индекс лучшего атрибута по выбранному алгоритму.
+    algo in {"id3", "c45", "cart", "chaid"}
+    """
+    best_score = -1.0
+    best_attr = None
+
+    for idx in available_attrs:
+        if algo == "id3":
+            score = information_gain(examples, idx)
+        elif algo == "c45":
+            score = gain_ratio(examples, idx)
+        elif algo == "cart":
+            score = gini_gain(examples, idx)
+        elif algo == "chaid":
+            score = chi_square_score(examples, idx)
+        else:
+            raise ValueError(f"Неизвестный алгоритм: {algo}")
+
+        if score > best_score:
+            best_score = score
+            best_attr = idx
+
+    # порог на "слишком маленький" выигрыш
+    if best_attr is None or best_score <= 1e-9:
+        return None
+    return best_attr
+
+
+def build_tree(examples, attr_names, available_attrs, algo: str):
+    """
+    Единый конструктор дерева для ID3 / C4.5 / CART / CHAID.
+    """
+    # все примеры одного класса -> лист
     labels = {ex["label"] for ex in examples}
     if len(labels) == 1:
         return Node(is_leaf=True, label=next(iter(labels)))
 
+    # нет атрибутов или пустое множество -> лист с majority class
     if not available_attrs or not examples:
         return Node(is_leaf=True, label=majority_label(examples))
 
-    # выбираем атрибут с максимальным IG
-    best_gain = -1.0
-    best_attr = None
-    for idx in available_attrs:
-        gain = information_gain(examples, idx)
-        if gain > best_gain:
-            best_gain = gain
-            best_attr = idx
-
-    if best_attr is None or best_gain <= 1e-9:
+    best_attr = choose_best_attribute(examples, attr_names, available_attrs, algo)
+    if best_attr is None:
         return Node(is_leaf=True, label=majority_label(examples))
 
     node = Node(
@@ -123,7 +249,7 @@ def build_id3(examples, attr_names, available_attrs):
         if not subset:
             child = Node(is_leaf=True, label=majority_label(examples))
         else:
-            child = build_id3(subset, attr_names, new_available)
+            child = build_tree(subset, attr_names, new_available, algo)
         node.children[value] = child
 
     return node
@@ -137,7 +263,8 @@ def count_leaves(node):
     return sum(count_leaves(child) for child in node.children.values())
 
 
-def assign_positions(node, x_min, x_max, y, positions, parent=None, edges=None, value_labels=None):
+def assign_positions(node, x_min, x_max, y, positions,
+                     parent=None, edges=None, value_labels=None):
     """
     Рекурсивно назначаем координаты узлам.
     x_min, x_max – горизонтальный диапазон для поддерева.
@@ -171,7 +298,7 @@ def assign_positions(node, x_min, x_max, y, positions, parent=None, edges=None, 
                          positions, node, edges, value_labels)
 
 
-def plot_tree(root, output_path="data/id3_tree.png"):
+def plot_tree(root, output_path="data/tree.png", title=None):
     positions = {}
     edges = []
     value_labels = {}
@@ -184,7 +311,7 @@ def plot_tree(root, output_path="data/id3_tree.png"):
 
     fig, ax = plt.subplots(figsize=(10, 6))
 
-    # рисуем рёбра
+    # рёбра
     for parent, child in edges:
         x1, y1 = positions[parent]
         x2, y2 = positions[child]
@@ -197,7 +324,7 @@ def plot_tree(root, output_path="data/id3_tree.png"):
         ax.text(mid_x, mid_y + 0.03, text,
                 ha="center", va="bottom")
 
-    # рисуем узлы
+    # узлы
     for node, (x, y) in positions.items():
         if node.is_leaf:
             circle = plt.Circle((x, y), 0.02, fill=True, alpha=0.3)
@@ -210,11 +337,12 @@ def plot_tree(root, output_path="data/id3_tree.png"):
             ax.text(x, y, node.attr_name, ha="center", va="center")
 
     ax.set_xlim(-0.05, 1.05)
-    # по y делаем небольшой запас
     ys = [pos[1] for pos in positions.values()]
     ax.set_ylim(min(ys) - 0.5, 0.5)
 
     ax.axis("off")
+    if title:
+        ax.set_title(title)
     fig.tight_layout()
 
     fig.savefig(output_path, dpi=300)
@@ -224,22 +352,34 @@ def plot_tree(root, output_path="data/id3_tree.png"):
 # ---------- main ----------
 
 def main():
+    if len(sys.argv) >= 2:
+        algo = sys.argv[1].lower()
+    else:
+        algo = "id3"
+
+    if algo not in {"id3", "c45", "cart", "chaid"}:
+        raise SystemExit("Использование: python3 plot_id3_tree.py [id3|c45|cart|chaid]")
+
     csv_path = os.path.join("data", "supplier_dataset.csv")
     if not os.path.exists(csv_path):
         raise FileNotFoundError(
-            f"Файл {csv_path} не найден. Сначала запусти C++ программу, "
-            "чтобы она сгенерировала CSV."
+            f"Файл {csv_path} не найден. Сначала запусти C++ программу,"
+            " чтобы она сгенерировала CSV."
         )
 
     attr_names, target_name, data = load_dataset(csv_path)
     print("Атрибуты:", attr_names)
     print("Целевой атрибут:", target_name)
     print(f"Количество примеров: {len(data)}")
+    print(f"Алгоритм: {algo.upper()}")
 
     available_attrs = list(range(len(attr_names)))
-    root = build_id3(data, attr_names, available_attrs)
+    root = build_tree(data, attr_names, available_attrs, algo)
 
-    plot_tree(root, output_path=os.path.join("data", "id3_tree.png"))
+    output_name = f"{algo}_tree.png"
+    output_path = os.path.join("data", output_name)
+    title = f"Дерево решений ({algo.upper()})"
+    plot_tree(root, output_path=output_path, title=title)
 
 
 if __name__ == "__main__":
