@@ -1,1 +1,0 @@
-/usr/bin/c++ CMakeFiles/sem13.dir/src/main.cpp.o -o sem13 
