@@ -1,0 +1,1 @@
+rm -rf data && rm -rf build && cmake -B build && cmake --build build && ./build/sem13 && python3 py/plot_id3_tree.py id3 && python3 py/plot_id3_tree.py c45 && python3 py/plot_id3_tree.py cart && python3 py/plot_id3_tree.py chaid
