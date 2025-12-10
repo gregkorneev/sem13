@@ -51,24 +51,24 @@ void saveDatasetToCSV(const std::string& filename,
     }
 
     // ===== ЗАГОЛОВОК =====
-    // Цена,Качество,Срок поставки,Надёжность,Решение
+    // Цена;Качество;Срок поставки;Надёжность;Решение
     for (std::size_t i = 0; i < attrNames.size(); ++i) {
         out << attrNames[i];
         if (i + 1 < attrNames.size()) {
-            out << ','; // разделитель колонок
+            out << ';'; // разделитель колонок — ТОЧКА С ЗАПЯТОЙ
         }
     }
-    out << ",Решение\n";
+    out << ";Решение\n";
 
     // ===== СТРОКИ ДАННЫХ =====
     for (const auto& ex : data) {
         for (std::size_t i = 0; i < ex.attrs.size(); ++i) {
             out << ex.attrs[i];
             if (i + 1 < ex.attrs.size()) {
-                out << ',';
+                out << ';';
             }
         }
-        out << ',' << ex.label << '\n';
+        out << ';' << ex.label << '\n';
     }
 
     std::cout << "Таблица обучающей выборки сохранена в CSV: "
